@@ -9,6 +9,17 @@ require("dotenv").config();
 
 const admin = require("firebase-admin");
 
+// 🔥 تأكد إن الفولدر بيتعمل تلقائي
+if (!fs.existsSync("uploads")) {
+  fs.mkdirSync("uploads");
+}
+
+// 🔥 تأكد من وجود Firebase config
+if (!process.env.FIREBASE_CONFIG) {
+  console.log("❌ FIREBASE_CONFIG مش موجود");
+  process.exit(1);
+}
+
 const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
 
 // تهيئة Firebase
@@ -27,9 +38,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// إعدادات التطبيق
+// 🔥 خلي Express يقرأ ملفات EJS من نفس المكان
+app.set("views", __dirname);
 app.set("view engine", "ejs");
-app.use(express.static("public"));
+
+// ❌ شيلنا public عشان مش عندك فولدر
+// app.use(express.static("public"));
+
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(session({
   secret: "secret-key",
@@ -37,7 +52,7 @@ app.use(session({
   saveUninitialized: true,
 }));
 
-// 🔥 دوال Firestore
+// 🔥 Firestore Functions
 async function loadResults() {
   const snapshot = await db.collection("results").get();
   return snapshot.docs.map(doc => doc.data());
@@ -65,7 +80,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// صفحات العملاء
+// الصفحات
 app.get("/", (req, res) => {
   res.render("index");
 });
@@ -90,18 +105,19 @@ app.get("/view/:filename", (req, res) => {
   res.sendFile(file);
 });
 
-// لوحة التحكم
+// admin
 app.get("/admin", async (req, res) => {
   if (req.session.loggedIn) {
     const results = await loadResults();
-    res.render("admin/dashboard", { results });
+    res.render("dashboard", { results });
   } else {
-    res.render("admin/login");
+    res.render("login");
   }
 });
 
 app.post("/admin/login", (req, res) => {
   const { username, password } = req.body;
+
   if (
     username === (process.env.ADMIN_USERNAME || "john") &&
     password === (process.env.ADMIN_PASSWORD || "latif")
@@ -113,12 +129,8 @@ app.post("/admin/login", (req, res) => {
   }
 });
 
-// ✅ تسجيل الخروج
 app.get("/admin/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.send("حدث خطأ أثناء تسجيل الخروج.");
-    }
+  req.session.destroy(() => {
     res.redirect("/admin");
   });
 });
@@ -126,32 +138,32 @@ app.get("/admin/logout", (req, res) => {
 app.post("/admin/upload", upload.single("pdf"), async (req, res) => {
   if (!req.session.loggedIn) return res.redirect("/admin");
 
-  const { name, phone, email, test, notes } = req.body; // إضافة notes
+  const { name, phone, email, test, notes } = req.body;
   const file = req.file.filename;
 
   const newResult = {
-    name,            // اسم المريض
-    test,            // اسم التحليل
-    phone,           // رقم الهاتف
+    name,
+    test,
+    phone,
     email,
-    notes: notes || "", // إضافة الملاحظات
+    notes: notes || "",
     file,
     date: new Date().toLocaleString("ar-EG", { timeZone: "Africa/Cairo" })
   };
 
   await addResult(newResult);
 
-  const link = `http://lab-results-production.up.railway.app/`;
+  const link = `http://lab-results.up.railway.app/`;
 
   const mailOptions = {
     from: process.env.EMAIL_ADDRESS,
     to: email,
     subject: "نتيجة التحاليل الخاصة بك",
-    text: `مرحبًا ${name}،\n\nنتيجة التحليل الخاصة بك أصبحت جاهزة.\n\nيمكنك زيارة الموقع والبحث باستخدام رقم هاتفك:\n${link}\n\n${notes ? `ملاحظات إضافية: ${notes}\n` : ''}`,
+    text: `مرحبًا ${name}\n\nالنتيجة جاهزة:\n${link}\n${notes || ""}`,
   };
 
   transporter.sendMail(mailOptions, (error) => {
-    if (error) console.log("❌ فشل إرسال الإيميل:", error);
+    if (error) console.log("❌ فشل الإيميل:", error);
     res.redirect("/admin");
   });
 });
@@ -175,21 +187,20 @@ app.post("/admin/notify", async (req, res) => {
   const snapshot = await db.collection("results").doc(fileToNotify).get();
   const result = snapshot.data();
 
-  if (!result) return res.send("التحليل غير موجود.");
+  if (!result) return res.send("غير موجود");
 
   const mailOptions = {
     from: process.env.EMAIL_ADDRESS,
     to: result.email,
-    subject: "تم حذف نتيجتك من الموقع",
-    text: `مرحبًا ${result.name}، لقد تم حذف نتيجتك من النظام. لأي استفسار يرجى التواصل مع https://wa.me/+201274445091.`,
+    subject: "تم حذف النتيجة",
+    text: `تم حذف نتيجتك. للتواصل: https://wa.me/+201274445091`,
   };
 
-  transporter.sendMail(mailOptions, (error) => {
-    if (error) console.log("❌ فشل إرسال الإيميل:", error);
+  transporter.sendMail(mailOptions, () => {
     res.redirect("/admin");
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ السيرفر شغال على http://localhost:${PORT}`);
+  console.log(`✅ شغال على http://localhost:${PORT}`);
 });
